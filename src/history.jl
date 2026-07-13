@@ -5,8 +5,47 @@
 # Scratch spaces survive CI runs wherever the depot is cached (julia-actions/cache
 # does this by default); TOML keeps the files human-readable and lets projects
 # commit a seed file as a fallback for cold caches.
+#
+# The scratch space resolves against `Base.DEPOT_PATH` at call time, so
+# harnesses that swap in a throwaway depot stack can pin the file first with
+# `set_history_file`.
 
+const history_file_override = Ref{Union{String, Nothing}}(nothing)
+
+"""
+    set_history_file(path::Union{AbstractString, Nothing})
+
+Pin the file where test durations are loaded from and saved to, overriding
+the scratch-space default. `nothing` restores the default.
+
+The default location resolves against `Base.DEPOT_PATH` when [`runtests`](@ref)
+loads and saves the history, so a harness that replaces the depot stack with a
+temporary one (to isolate its tests from the user depot, say) would read and
+write durations in a throwaway location and start every run cold. Such a
+harness should pin the file before touching the depot stack — either to the
+still-default location:
+
+```julia
+set_history_file(history_file(MyPackage))
+```
+
+or to any other stable path, e.g. a gitignored file in `test/`.
+"""
+function set_history_file(path::Union{AbstractString, Nothing})
+    history_file_override[] = path === nothing ? nothing : abspath(path)
+    return history_file_override[]
+end
+
+"""
+    history_file(mod::Module) -> String
+
+The file where test durations for `mod`'s package are recorded: the path
+pinned with [`set_history_file`](@ref) if any, otherwise a TOML file in a
+scratch space, keyed by the package's UUID and the Julia minor version.
+"""
 function history_file(mod::Module)
+    override = history_file_override[]
+    override === nothing || return override
     pkg = Base.PkgId(mod)
     key = string(something(pkg.uuid, pkg.name))
     dir = @get_scratch!("durations")

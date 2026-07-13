@@ -882,6 +882,27 @@ end
         @test history["seeded/test"] == 42.5
     end
 
+    # set_history_file pins loading and saving to an explicit path, so
+    # history survives even when the depot stack is swapped out under us
+    mktempdir() do dir
+        pinned = joinpath(dir, "pinned.toml")
+        set_history_file(pinned)
+        try
+            @test Testosterone.history_file(Testosterone) == pinned
+            name = "history-pinned/" * string(rand(UInt32); base = 16)
+            testsuite = suite(name => :(@test true))
+            runtests(Testosterone, String[]; testsuite, stdout = devnull, stderr = devnull)
+            @test isfile(pinned)
+            @test haskey(Testosterone.load_history(Testosterone), name)
+            io = IOBuffer()
+            runtests(Testosterone, String[]; testsuite, stdout = io, stderr = io)
+            @test contains(String(take!(io)), r"Scheduling using test durations from previous runs \(1 of 1")
+        finally
+            set_history_file(nothing)
+        end
+        @test Testosterone.history_file(Testosterone) != pinned
+    end
+
     # Lazy worker startup and init_worker_code must not be charged to the first
     # test and persisted as if they were properties of that test. The absolute
     # duration is dominated by first-call compilation on the fresh worker, which
