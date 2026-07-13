@@ -113,9 +113,19 @@ function addworker(;
     push!(worker_env, "OPENBLAS_NUM_THREADS" => "1")
 
     w = TestWorker(; exename, exeflags, env = worker_env)
-    Malt.remote_eval_wait(Main, w.malt, :(import Testosterone))
-    if init_worker_code != :()
-        Malt.remote_eval_wait(Main, w.malt, init_worker_code)
+    try
+        Malt.remote_eval_wait(Main, w.malt, :(import Testosterone))
+        if init_worker_code != :()
+            Malt.remote_eval_wait(Main, w.malt, init_worker_code)
+        end
+    catch
+        # The caller never receives `w` when initialization fails, so it cannot
+        # clean the process up itself.
+        try
+            stop(w)
+        catch
+        end
+        rethrow()
     end
     return w
 end

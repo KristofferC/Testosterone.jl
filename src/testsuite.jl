@@ -44,7 +44,7 @@ function find_tests(dir::AbstractString)
             endswith(file, ".jl") || continue
             file == "runtests.jl" && continue
             path = joinpath(root, file)
-            name = replace(relpath(path, dir)[1:(end - 3)], path_separator => '/')
+            name = replace(first(splitext(relpath(path, dir))), path_separator => '/')
             push!(suite, TestCase(name, :(include($path))))
         end
     end
