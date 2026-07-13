@@ -155,6 +155,14 @@ the test's record (`record.extras`).
   run schedule the next. For other CI systems, or as a fallback while caches
   are cold or evicted, pass `history_seed = "path/to/durations.toml"` with a
   committed file mapping test names to seconds.
+- The scratch space is resolved against `Base.DEPOT_PATH` when the history is
+  loaded and saved, so a harness that swaps in a temporary depot stack would
+  record durations in a throwaway location and start every run cold. Pin the
+  file to a stable path before touching the depot stack:
+
+  ```julia
+  set_history_file(history_file(MyPackage))  # or any other stable path
+  ```
 - Each test's RNG is seeded with a hash of the test's name, so runs are
   reproducible but different tests see different streams. Set `rng_seed` to an
   `Integer` to seed all tests identically, or `nothing` to disable.

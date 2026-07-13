@@ -282,6 +282,10 @@ longest first, for load balancing — and distributed over `--jobs=N` workers
 - `history_seed`: path to a committed TOML file with expected test durations,
   used when no local history exists yet (see [`load_history`](@ref)).
 
+Durations are recorded to [`history_file`](@ref)`(mod)` for scheduling future
+runs; harnesses that replace the depot stack should pin that file first with
+[`set_history_file`](@ref).
+
 ## Command-line interface
 
 - `--help`: print usage and return

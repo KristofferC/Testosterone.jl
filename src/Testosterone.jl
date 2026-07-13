@@ -19,7 +19,7 @@ runtests(MyPackage, ARGS)
 module Testosterone
 
 export runtests, TestCase, find_tests, parse_args, filter_tests!,
-    addworker, addworkers
+    addworker, addworkers, history_file, set_history_file
 
 using Malt
 using Dates: now
