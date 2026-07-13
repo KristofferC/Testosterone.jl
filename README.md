@@ -13,6 +13,17 @@ executed in isolated sandbox modules.
 
 ## Setup
 
+Testosterone is not registered, so add it as a test dependency via a
+`[sources]` entry (requires Julia 1.11+) in `test/Project.toml`:
+
+```toml
+[deps]
+Testosterone = "3074387b-98ab-45ee-bb1d-b13a365e95c3"
+
+[sources]
+Testosterone = {url = "https://github.com/KristofferC/Testosterone.jl"}
+```
+
 Testosterone runs each `.jl` file inside your `test/` directory concurrently
 and in isolation, so remove any `include` statements from `test/runtests.jl`
 and replace its contents with:
