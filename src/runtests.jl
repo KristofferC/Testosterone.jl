@@ -142,8 +142,8 @@ end
 # Run a single test on this slot. Returns the slot's pool worker (possibly
 # newly created, possibly retired to `nothing`).
 function run_one!(slot::Int, tc::TestCase, pool_worker, state::RunState, worker_kwargs, test_cfg)
-    start_time = time()
-    @lock state.running state.running[][tc.name] = start_time
+    worker_start_time = time()
+    @lock state.running state.running[][tc.name] = worker_start_time
     try
         # select a worker: a custom one from the `test_worker` hook, or the
         # slot's own pool worker (created lazily, recreated after recycling)
@@ -165,6 +165,9 @@ function run_one!(slot::Int, tc::TestCase, pool_worker, state::RunState, worker_
         end
         @lock state.active_workers state.active_workers[][slot] = wrkr
 
+        # Worker creation and init_worker_code are per-process setup costs, not
+        # properties of whichever test happened to be scheduled first.
+        test_start_time = time()
         put!(state.events, TestStarted(tc.name, wrkr.id))
 
         timeout = something(tc.timeout, test_cfg.timeout, Some(nothing))
@@ -183,7 +186,7 @@ function run_one!(slot::Int, tc::TestCase, pool_worker, state::RunState, worker_
 
         raw = try
             Malt.remote_call_fetch(Base.invokelatest, wrkr.malt, runtest,
-                                   tc, test_cfg.init_code, start_time, test_cfg.color,
+                                   tc, test_cfg.init_code, worker_start_time, test_cfg.color,
                                    test_cfg.seed_for(tc), test_cfg.extras_hook)
         catch err
             err isa InterruptException && rethrow()
@@ -215,7 +218,8 @@ function run_one!(slot::Int, tc::TestCase, pool_worker, state::RunState, worker_
             nothing
         end
 
-        result = TestResult(tc, wrkr.id, outcome, record, exception, output, start_time, stop_time)
+        result = TestResult(tc, wrkr.id, outcome, record, exception, output,
+                            test_start_time, stop_time)
         @lock state.results push!(state.results[], result)
         outcome === :skipped || put!(state.events, TestCompleted(result))
 

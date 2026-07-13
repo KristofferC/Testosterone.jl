@@ -22,10 +22,8 @@ end
 # consulted on the workers, to keep `Test` from printing failures as they are
 # recorded (we render them ourselves, from the collected results).
 @static if VERSION >= v"1.13.0-DEV.1044"
-    using Base.ScopedValues: @with
-
     function disable_testset_printing(f)
-        @with Test.TESTSET_PRINT_ENABLE => false begin
+        Base.ScopedValues.with(Test.TESTSET_PRINT_ENABLE => false) do
             f()
         end
     end

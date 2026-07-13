@@ -159,6 +159,36 @@ end
 
 testset_name(ts) = hasproperty(ts, :description) ? string(ts.description) : string(typeof(ts))
 
+# Return aggregate counts for a custom test set when it implements Test's
+# counting interface. Julia <= 1.11 returns a 9-tuple; newer Julia versions
+# return `TestCounts`, whose `customized` bit distinguishes the generic
+# unknown-count fallback from a real implementation.
+function custom_testset_counts(ts::Test.AbstractTestSet)
+    applicable(Test.get_test_counts, ts) || return nothing
+    counts = try
+        Test.get_test_counts(ts)
+    catch
+        return nothing
+    end
+    try
+        if counts isa Tuple && length(counts) >= 8
+            return (counts[1] + counts[5], counts[2] + counts[6],
+                    counts[3] + counts[7], counts[4] + counts[8])
+        elseif hasproperty(counts, :customized) && counts.customized
+            return (
+                counts.passes + counts.cumulative_passes,
+                counts.fails + counts.cumulative_fails,
+                counts.errors + counts.cumulative_errors,
+                counts.broken + counts.cumulative_broken,
+            )
+        end
+    catch
+        # A malformed custom counting implementation is still an unknown test
+        # set, and must not turn the run green.
+    end
+    return nothing
+end
+
 # Reduce a `DefaultTestSet` tree to `SummaryNode`s, collecting rendered
 # failures along the way. Runs on the worker.
 function summarize(ts::Test.DefaultTestSet, path::Vector{String},
@@ -186,8 +216,29 @@ function summarize(ts::Test.DefaultTestSet, path::Vector{String},
             errors += 1
             push!(failures, render_failure(:error, res, path, color))
         elseif res isa Test.AbstractTestSet
-            # a non-default test set we cannot introspect; record its presence
-            push!(children, SummaryNode(testset_name(res), 0, 0, 0, 0, SummaryNode[]))
+            name = testset_name(res)
+            counts = custom_testset_counts(res)
+            if counts === nothing
+                # An opaque custom test set may contain failures. Treating it
+                # as successful would make a red test run falsely green.
+                push!(children, SummaryNode(name, 0, 0, 1, 0, SummaryNode[]))
+                push!(failures, FailureInfo(
+                    :error, [path; name],
+                    "Cannot inspect results of custom test set $(typeof(res)); treating it as an error.",
+                    "unknown",
+                ))
+            else
+                p, f, e, b = counts
+                push!(children, SummaryNode(name, p, f, e, b, SummaryNode[]))
+                if f + e > 0
+                    kind = e > 0 ? :error : :fail
+                    push!(failures, FailureInfo(
+                        kind, [path; name],
+                        "Custom test set $(typeof(res)) reported $f failures and $e errors; individual results are unavailable.",
+                        "unknown",
+                    ))
+                end
+            end
         end
     end
     return SummaryNode(last(path), passes, fails, errors, broken, children)

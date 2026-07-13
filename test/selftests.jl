@@ -162,6 +162,21 @@ end
     @test contains(str, "SUCCESS")
 end
 
+@testset "failed init worker cleanup" begin
+    before = _count_child_pids()
+    if before < 0
+        @test_skip false
+    else
+        @test_throws Exception addworker(init_worker_code = :(error("init failed")))
+        # Process shutdown is asynchronous on some platforms.
+        for _ in 1:50
+            _count_child_pids() <= before && break
+            sleep(0.1)
+        end
+        @test _count_child_pids() == before
+    end
+end
+
 @testset "extras hook and extra columns" begin
     init_worker_code = quote
         function my_hook(run)
@@ -844,6 +859,14 @@ end
             @test [tc.name for tc in ts] == ["test"]
         end
     end
+
+    @testset "unicode filenames" begin
+        mktempdir() do dir
+            write(joinpath(dir, "räksmörgås.jl"), "@test true")
+            ts = find_tests(dir)
+            @test [tc.name for tc in ts] == ["räksmörgås"]
+        end
+    end
 end
 
 @testset "history" begin
@@ -858,6 +881,23 @@ end
         history = Testosterone.load_history(Testosterone; seed_file)
         @test history["seeded/test"] == 42.5
     end
+
+    # Lazy worker startup and init_worker_code must not be charged to the first
+    # test and persisted as if they were properties of that test. The absolute
+    # duration is dominated by first-call compilation on the fresh worker, which
+    # is wildly variable on CI, so an absolute threshold is flaky. Instead run a
+    # sleeping worker against an otherwise identical baseline: the compile time
+    # cancels out, isolating the sleep, which must not show up in the duration.
+    tag = string(rand(UInt32); base = 16)
+    plain, sleepy = "history-plain/" * tag, "history-sleepy/" * tag
+    runtests(Testosterone, ["--jobs=1"]; testsuite = suite(plain => :(@test true)),
+             stdout = devnull, stderr = devnull)
+    runtests(Testosterone, ["--jobs=1"]; testsuite = suite(sleepy => :(@test true)),
+             init_worker_code = :(sleep(3)), stdout = devnull, stderr = devnull)
+    history = Testosterone.load_history(Testosterone)
+    # a 3s worker sleep leaking into the duration would dwarf the sub-second
+    # difference in the two fresh workers' compile times
+    @test history[sleepy] - history[plain] < 1.5
 end
 
 @testset "get_max_worker_rss" begin
@@ -993,6 +1033,73 @@ end
     str = String(take!(io))
     @test contains(str, "FAILURE")
     @test contains(str, "MY CUSTOM RESULT REPORT")
+end
+
+@testset "opaque custom test sets fail closed" begin
+    init_code = quote
+        using Test
+        mutable struct OpaqueTestSet <: Test.AbstractTestSet
+            description::String
+            results::Vector{Any}
+            OpaqueTestSet(desc; kwargs...) = new(desc, Any[])
+        end
+        Test.record(ts::OpaqueTestSet, result) = (push!(ts.results, result); result)
+        Test.finish(ts::OpaqueTestSet) = (Test.record(Test.get_testset(), ts); ts)
+    end
+    testsuite = suite("opaque" => quote
+        @testset OpaqueTestSet "nested opaque" begin
+            @test false
+        end
+    end)
+    io = IOBuffer()
+    @test_throws Test.FallbackTestSetException begin
+        runtests(Testosterone, String[]; init_code, testsuite, stdout = io, stderr = io)
+    end
+    str = String(take!(io))
+    @test contains(str, "FAILURE")
+    @test contains(str, "Cannot inspect results of custom test set")
+end
+
+@testset "counted custom test sets" begin
+    init_code = quote
+        using Test
+        mutable struct CountedTestSet <: Test.AbstractTestSet
+            description::String
+            results::Vector{Any}
+            CountedTestSet(desc; kwargs...) = new(desc, Any[])
+        end
+        Test.record(ts::CountedTestSet, result) = (push!(ts.results, result); result)
+        Test.finish(ts::CountedTestSet) = (Test.record(Test.get_testset(), ts); ts)
+
+        function counted_results(ts::CountedTestSet)
+            p = count(r -> r isa Test.Pass, ts.results)
+            f = count(r -> r isa Test.Fail, ts.results)
+            e = count(r -> r isa Test.Error, ts.results)
+            b = count(r -> r isa Test.Broken, ts.results)
+            return p, f, e, b
+        end
+        if isdefined(Test, :TestCounts)
+            function Test.get_test_counts(ts::CountedTestSet)
+                p, f, e, b = counted_results(ts)
+                return Test.TestCounts(true, p, f, e, b, 0, 0, 0, 0, "")
+            end
+        else
+            function Test.get_test_counts(ts::CountedTestSet)
+                p, f, e, b = counted_results(ts)
+                return p, f, e, b, 0, 0, 0, 0, ""
+            end
+        end
+    end
+    testsuite = suite("counted" => quote
+        @testset CountedTestSet "nested counted" begin
+            @test true
+        end
+    end)
+    io = IOBuffer()
+    runtests(Testosterone, String[]; init_code, testsuite, stdout = io, stderr = io)
+    str = String(take!(io))
+    @test contains(str, "SUCCESS")
+    @test contains(str, r"Overall\s+\|\s+1\s+1")
 end
 
 @testset "serial tests" begin
